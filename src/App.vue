@@ -15,7 +15,8 @@ import {
   loadMessages,
   clearMessages,
   updateFolder,
-  initializeData
+  initializeData,
+  moveChatToFolder
 } from './services/database';
 
 // State
@@ -132,6 +133,13 @@ async function handleDeleteChat(chatId) {
   }
 }
 
+// Handle moving chat to folder
+async function handleMovedToFolder(folderId) {
+  // This function will be called when the chat is moved to a folder
+  // No additional action needed here as the database service already updates the chat
+  console.log(`Chat ${selectedChatId.value} moved to folder ${folderId}`);
+}
+
 // Toggle sidebar
 function toggleSidebar() {
   showSidebar.value = !showSidebar.value;
@@ -223,7 +231,8 @@ async function clearChat() {
           @update-title="updateChatTitle"
           @clear-chat="clearChat"
           @delete-chat="handleDeleteChat"
-          @toggle-sidebar="toggleSidebar" />
+          @toggle-sidebar="toggleSidebar"
+          @moved-to-folder="handleMovedToFolder" />
       </main>
      
     </template>

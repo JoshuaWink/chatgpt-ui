@@ -7,9 +7,17 @@
             <i class="bi bi-list"></i>
           </button>
           <div class="avatar bg-success text-white me-2">A</div>
-          <h5 class="mb-0">{{ currentChat.title || 'New Chat' }}</h5>
+          <div>
+            <h5 class="mb-0">{{ currentChat.title || 'New Chat' }}</h5>
+            <small class="text-muted">
+              <i class="bi bi-folder-fill me-1"></i>{{ currentFolderName }}
+            </small>
+          </div>
         </div>
         <div>
+          <button class="btn btn-sm btn-outline-secondary me-2" @click="showMoveToFolder">
+            <i class="bi bi-folder-symlink me-1"></i>Move
+          </button>
           <button class="btn btn-sm btn-outline-secondary me-2" @click="deleteChat">
             <i class="bi bi-trash me-1"></i>Delete
           </button>
@@ -34,12 +42,42 @@
     <div class="card-footer p-0 border-0">
       <chat-input @send="sendMessage" />
     </div>
+    
+    <!-- Folder Selection Dialog -->
+    <div class="modal fade" :class="{ 'show d-block': showFolderSelect }">
+      <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content">
+          <div class="modal-header">
+            <h5 class="modal-title">Move to Folder</h5>
+            <button type="button" class="btn-close" @click="showFolderSelect = false"></button>
+          </div>
+          <div class="modal-body">
+            <div class="list-group">
+              <button 
+                v-for="folder in availableFolders" 
+                :key="folder.id"
+                class="list-group-item list-group-item-action d-flex align-items-center"
+                :class="{ 'active': currentChat.folder_id === folder.id }"
+                @click="moveToFolder(folder.id)">
+                <i class="bi bi-folder me-2"></i>
+                {{ folder.name }}
+              </button>
+            </div>
+          </div>
+          <div class="modal-footer">
+            <button type="button" class="btn btn-secondary" @click="showFolderSelect = false">Cancel</button>
+          </div>
+        </div>
+      </div>
+      <div class="modal-backdrop fade show" @click="showFolderSelect = false"></div>
+    </div>
   </div>
 </template>
 
 <script>
 import ChatMessage from './ChatMessage.vue';
 import ChatInput from './ChatInput.vue';
+import { folders, moveChatToFolder } from '../services/database';
 
 export default {
   name: 'ChatWindow',
@@ -51,6 +89,20 @@ export default {
     currentChat: {
       type: Object,
       required: true
+    }
+  },
+  data() {
+    return {
+      showFolderSelect: false
+    };
+  },
+  computed: {
+    availableFolders() {
+      return folders.value.filter(folder => folder.id !== this.currentChat.folder_id);
+    },
+    currentFolderName() {
+      const folder = folders.value.find(f => f.id === this.currentChat.folder_id);
+      return folder ? folder.name : 'Uncategorized';
     }
   },
   methods: {
@@ -109,6 +161,14 @@ export default {
     },
     toggleSidebar() {
       this.$emit('toggle-sidebar');
+    },
+    showMoveToFolder() {
+      this.showFolderSelect = true;
+    },
+    moveToFolder(folderId) {
+      moveChatToFolder(this.currentChat.id, folderId);
+      this.showFolderSelect = false;
+      this.$emit('moved-to-folder', folderId);
     }
   },
   mounted() {
@@ -171,6 +231,27 @@ export default {
   align-items: center;
   justify-content: center;
   border-radius: 4px;
+}
+
+/* Modal styling */
+.modal-backdrop {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background-color: rgba(0, 0, 0, 0.5);
+  z-index: 1040;
+}
+
+.modal {
+  z-index: 1050;
+  background-color: transparent;
+}
+
+.list-group-item.active {
+  background-color: #0d6efd;
+  border-color: #0d6efd;
 }
 
 @media (max-width: 767.98px) {
