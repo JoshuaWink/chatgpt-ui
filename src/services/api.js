@@ -65,19 +65,19 @@ export const fetchFolders = async () => {
   return apiCall(`${API_URL}/api/folders`);
 };
 
-export const createFolder = async (name) => {
+export const createFolder = async (name, parentId = null) => {
   return apiCall(`${API_URL}/api/folders`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ name })
+    body: JSON.stringify({ name, parent_id: parentId })
   });
 };
 
-export const updateFolder = async (id, name) => {
+export const updateFolder = async (id, name, parentId = null) => {
   return apiCall(`${API_URL}/api/folders/${id}`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ name })
+    body: JSON.stringify({ name, parent_id: parentId })
   });
 };
 

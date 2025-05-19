@@ -67,9 +67,9 @@ const loadChatsByFolder = async (folderId) => {
 };
 
 // Create a new folder
-const createFolder = async (name) => {
+const createFolder = async (name, parentId = null) => {
   try {
-    const newFolder = await api.createFolder(name);
+    const newFolder = await api.createFolder(name, parentId);
     await loadFolders();
     return newFolder.id;
   } catch (err) {
@@ -82,7 +82,7 @@ const createFolder = async (name) => {
 // Update a folder
 const updateFolder = async (folder) => {
   try {
-    await api.updateFolder(folder.id, folder.name);
+    await api.updateFolder(folder.id, folder.name, folder.parent_id);
     await loadFolders();
     return true;
   } catch (err) {
@@ -202,6 +202,37 @@ const clearMessages = async (chatId) => {
   }
 };
 
+// Move a folder to another folder
+const moveFolderToParent = async (folderId, parentId) => {
+  try {
+    // Don't allow moving to itself
+    if (folderId === parentId) {
+      throw new Error('Cannot move a folder into itself');
+    }
+    
+    // Don't allow moving the Uncategorized folder
+    if (folderId === 1) {
+      throw new Error('Cannot move the Uncategorized folder');
+    }
+    
+    // Get the folder to update its parent_id
+    const folder = folders.value.find(f => f.id === folderId);
+    if (!folder) {
+      throw new Error(`Folder with ID ${folderId} not found`);
+    }
+    
+    // Update the folder's parent_id
+    await api.updateFolder(folderId, folder.name, parentId);
+    
+    // Reload folders to update the UI
+    await loadFolders();
+    return true;
+  } catch (err) {
+    console.error(`Failed to move folder ${folderId} to parent ${parentId}:`, err);
+    throw err;
+  }
+};
+
 export {
   folders,
   chats,
@@ -220,5 +251,6 @@ export {
   deleteChat,
   addMessage,
   loadMessages,
-  clearMessages
+  clearMessages,
+  moveFolderToParent
 }; 

@@ -18,6 +18,25 @@
               ref="folderNameInput"
               @keyup.enter="save">
           </div>
+          <div class="mb-3">
+            <label for="parentFolder" class="form-label">Parent Folder (Optional)</label>
+            <select 
+              class="form-select" 
+              id="parentFolder" 
+              v-model="parentId">
+              <option :value="null">None (Root level)</option>
+              <option 
+                v-for="folder in availableFolders" 
+                :key="folder.id" 
+                :value="folder.id"
+                :disabled="isEdit && folder.id === this.folder.id">
+                {{ folder.name }}
+              </option>
+            </select>
+            <div class="form-text">
+              Select a parent to create a nested folder structure.
+            </div>
+          </div>
         </div>
         <div class="modal-footer">
           <button type="button" class="btn btn-secondary" @click="close">Cancel</button>
@@ -36,6 +55,8 @@
 </template>
 
 <script>
+import { folders } from '../services/database';
+
 export default {
   name: 'FolderDialog',
   props: {
@@ -50,18 +71,31 @@ export default {
   },
   data() {
     return {
-      folderName: ''
+      folderName: '',
+      parentId: null
     };
   },
   computed: {
     isEdit() {
       return this.folder !== null;
+    },
+    availableFolders() {
+      if (this.isEdit) {
+        // When editing, exclude the current folder and its descendants
+        return folders.value.filter(f => 
+          f.id !== this.folder.id && 
+          !this.isDescendantOf(f.id, this.folder.id)
+        );
+      }
+      // When creating, show all folders
+      return folders.value;
     }
   },
   watch: {
     show(newVal) {
       if (newVal) {
         this.folderName = this.folder ? this.folder.name : '';
+        this.parentId = this.folder ? this.folder.parent_id : null;
         this.$nextTick(() => {
           this.$refs.folderNameInput.focus();
         });
@@ -77,10 +111,18 @@ export default {
       
       this.$emit('save', {
         id: this.folder ? this.folder.id : null,
-        name: this.folderName.trim()
+        name: this.folderName.trim(),
+        parent_id: this.parentId
       });
       
       this.close();
+    },
+    isDescendantOf(folderId, potentialAncestorId) {
+      // Check if folderId is a descendant of potentialAncestorId
+      const folder = folders.value.find(f => f.id === folderId);
+      if (!folder || !folder.parent_id) return false;
+      if (folder.parent_id === potentialAncestorId) return true;
+      return this.isDescendantOf(folder.parent_id, potentialAncestorId);
     }
   }
 }

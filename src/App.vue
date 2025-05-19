@@ -3,6 +3,7 @@ import { ref, reactive, watch, onMounted, onErrorCaptured } from 'vue'
 // Import components but don't render them yet
 import ChatWindow from './components/ChatWindow.vue'
 import Sidebar from './components/Sidebar.vue'
+import ErrorToast, { addError } from './components/ErrorToast.vue'
 import {
   folders,
   chats,
@@ -31,6 +32,14 @@ const folderChangeNotification = ref(null);
 onErrorCaptured((err) => {
   console.error('Global error captured:', err);
   localError.value = err;
+  
+  // Add to error toast system
+  addError({
+    title: 'Application Error',
+    message: err.message || 'An unexpected error occurred',
+    details: err.stack
+  });
+  
   return false; // Prevent propagation
 });
 
@@ -265,6 +274,9 @@ function toggleSidebar() {
       <hr>
       <p class="mb-0">Try refreshing the page. If the problem persists, please contact support.</p>
     </div>
+    
+    <!-- Persistent error toast notifications -->
+    <ErrorToast />
   </div>
 </template>
 

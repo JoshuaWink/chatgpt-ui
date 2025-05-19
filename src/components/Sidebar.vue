@@ -18,27 +18,25 @@
         </button>
       </div>
       <div class="folder-list">
-        <div 
-          v-for="folder in folders" 
+        <!-- Root folder tree component for each top-level folder -->
+        <folder-tree
+          v-for="folder in rootFolders"
           :key="folder.id"
-          class="folder-item p-2 rounded"
-          :class="{ 
-            'active': selectedFolderId === folder.id,
-            'folder-drop-target': isDraggingOver && currentDropTarget === folder.id 
-          }"
-          @click="selectFolder(folder.id)"
-          @contextmenu.prevent="showFolderContextMenu($event, folder)"
-          @dragover.prevent="handleDragOver($event, folder.id)"
-          @dragleave="handleDragLeave"
-          @drop.prevent="handleDrop($event, folder.id)">
-          <div class="d-flex align-items-center">
-            <i class="bi bi-folder me-2"></i>
-            <div class="folder-name text-truncate">{{ folder.name }}</div>
-            <span class="ms-auto badge bg-secondary rounded-pill" v-if="getFolderChatCount(folder.id) > 0">
-              {{ getFolderChatCount(folder.id) }}
-            </span>
-          </div>
-        </div>
+          :folder="folder"
+          :children="getChildFolders(folder.id)"
+          :all-folders="folders"
+          :all-chats="chats"
+          :selected-folder-id="selectedFolderId"
+          :current-drop-target="currentDropTarget"
+          :is-dragging-over="isDraggingOver"
+          :get-total-chat-count="getTotalFolderChatCount"
+          @select="selectFolder"
+          @context-menu="showFolderContextMenu($event.event, $event.folder)"
+          @drag-over="handleDragOver($event.event, $event.folderId)"
+          @drag-leave="handleDragLeave"
+          @drop="handleDrop($event, $event.folderId)"
+          @folder-drag-start="handleFolderDragStart"
+        />
       </div>
     </div>
 
@@ -99,20 +97,37 @@
           Chat moved to "{{ lastMovedToFolderName }}"
         </div>
       </div>
+      
+      <!-- Folder move toast -->
+      <div class="toast folder-toast" :class="{ 'show': folderMoveToast }" role="alert" aria-live="assertive" aria-atomic="true">
+        <div class="toast-header">
+          <i class="bi bi-folder-symlink text-primary me-2"></i>
+          <strong class="me-auto">Folder Moved</strong>
+          <button type="button" class="btn-close" @click="folderMoveToast = false"></button>
+        </div>
+        <div class="toast-body">
+          Folder "{{ folderMovedName }}" moved to "{{ folderDestinationName }}"
+        </div>
+      </div>
     </div>
   </div>
 </template>
 
 <script>
+import { ref } from 'vue';
+import { chats, folders, createFolder, deleteFolder, moveChatToFolder, moveFolderToParent } from '../services/database';
+import { addError } from '../components/ErrorToast.vue';
+import { safeFilter } from '../utils/errorUtils';
 import ContextMenu from './ContextMenu.vue';
 import FolderDialog from './FolderDialog.vue';
-import { folders, chats, createFolder, updateChat, moveChatToFolder, deleteFolder } from '../services/database';
+import FolderTree from './FolderTree.vue';
 
 export default {
   name: 'Sidebar',
   components: {
     ContextMenu,
-    FolderDialog
+    FolderDialog,
+    FolderTree
   },
   props: {
     selectedChatId: {
@@ -137,17 +152,25 @@ export default {
       isDraggingOver: false,
       currentDropTarget: null,
       draggedChat: null,
+      draggedFolder: null,
+      isDraggingFolder: false,
       // Toast notification
       showToast: false,
-      lastMovedToFolderName: ''
+      lastMovedToFolderName: '',
+      folderMoveToast: false,
+      folderMovedName: '',
+      folderDestinationName: ''
     };
   },
   computed: {
     filteredChats() {
       if (!this.selectedFolderId) {
-        return chats.value;
+        return chats.value || [];
       }
-      return chats.value.filter(chat => chat.folder_id === this.selectedFolderId);
+      return (chats.value || []).filter(chat => chat.folder_id === this.selectedFolderId);
+    },
+    rootFolders() {
+      return (folders.value || []).filter(folder => !folder.parent_id);
     }
   },
   methods: {
@@ -174,10 +197,24 @@ export default {
       this.$emit('close');
     },
     getFolderById(folderId) {
+      if (!folders.value) return { name: 'Unknown' };
       return folders.value.find(f => f.id === folderId) || { name: 'Unknown' };
     },
     getFolderChatCount(folderId) {
+      if (!chats.value) return 0;
       return chats.value.filter(chat => chat.folder_id === folderId).length;
+    },
+    getTotalFolderChatCount(folderId) {
+      // Get direct chats in this folder
+      let count = this.getFolderChatCount(folderId);
+      
+      // Get chats in all subfolders recursively
+      const childFolders = safeFilter(folders.value, folder => folder.parent_id === folderId);
+      for (const childFolder of childFolders) {
+        count += this.getTotalFolderChatCount(childFolder.id);
+      }
+      
+      return count;
     },
     // Context Menu for Chats
     showChatContextMenu(event, chat) {
@@ -267,63 +304,195 @@ export default {
         const existingFolder = folders.value.find(f => f.id === folder.id);
         if (existingFolder) {
           existingFolder.name = folder.name;
+          existingFolder.parent_id = folder.parent_id;
           // Update folder in database
           this.$emit('update-folder', existingFolder);
         }
       } else {
         // Create new folder
-        createFolder(folder.name);
+        createFolder(folder.name, folder.parent_id);
       }
     },
     // Drag and Drop functionality
     handleDragStart(event, chat) {
       this.isDragging = true;
       this.draggedChat = chat;
+      this.isDraggingFolder = false;
+      
       event.dataTransfer.effectAllowed = 'move';
-      event.dataTransfer.setData('text/plain', chat.id);
+      // Use new format: "type:id"
+      event.dataTransfer.setData('text/plain', `chat:${chat.id}`);
       
       // Add a dragging class to the element
       event.target.classList.add('dragging');
     },
+    handleFolderDragStart(data) {
+      this.isDragging = true;
+      this.isDraggingFolder = true;
+      this.draggedFolder = data.folder;
+      
+      // Add styling classes if needed
+      console.log('Folder drag started:', data.folder.name);
+    },
     handleDragOver(event, folderId) {
-      // Only allow dropping if this is a different folder than the chat's current folder
-      if (this.draggedChat && this.draggedChat.folder_id !== folderId) {
-        event.dataTransfer.dropEffect = 'move';
-        this.isDraggingOver = true;
-        this.currentDropTarget = folderId;
+      // Don't allow dropping on itself
+      if (this.isDraggingFolder && this.draggedFolder && this.draggedFolder.id === folderId) {
+        return;
       }
+      
+      // Don't allow dropping chat/folder into its current folder
+      if (
+        (this.draggedChat && this.draggedChat.folder_id === folderId) ||
+        (this.draggedFolder && this.draggedFolder.parent_id === folderId)
+      ) {
+        return;
+      }
+      
+      // Prevent dropping a folder into its descendant
+      if (this.isDraggingFolder && this.isDescendantOf(folderId, this.draggedFolder.id)) {
+        return;
+      }
+      
+      // Set drop effect
+      event.dataTransfer.dropEffect = 'move';
+      this.isDraggingOver = true;
+      this.currentDropTarget = folderId;
     },
     handleDragLeave() {
       this.isDraggingOver = false;
       this.currentDropTarget = null;
     },
     handleDrop(event, folderId) {
-      const chatId = parseInt(event.dataTransfer.getData('text/plain'));
-      
-      // Reset drag state
-      this.isDragging = false;
-      this.isDraggingOver = false;
-      this.currentDropTarget = null;
-      
-      // Move the chat to the new folder
-      if (chatId && this.draggedChat && this.draggedChat.folder_id !== folderId) {
-        this.moveChatToFolderWithNotification(chatId, folderId);
+      try {
+        console.log('Drop event received:', event, 'Target folder:', folderId);
+        
+        // If we're getting the event info directly from the folder-tree component
+        if (event && event.moveFolderId) {
+          // Moving a folder to another folder
+          this.moveFolderToParentWithNotification(event.moveFolderId, folderId);
+        } else if (event && event.chatId) {
+          // Moving a chat to a folder
+          this.moveChatToFolderWithNotification(event.chatId, folderId);
+        } else if (this.isDraggingFolder && this.draggedFolder) {
+          // Using the tracked dragged folder (fallback)
+          this.moveFolderToParentWithNotification(this.draggedFolder.id, folderId);
+        } else if (this.draggedChat) {
+          // Using the tracked dragged chat (fallback)
+          this.moveChatToFolderWithNotification(this.draggedChat.id, folderId);
+        } else if (event.dataTransfer && event.dataTransfer.getData) {
+          // Try to parse data from the dataTransfer
+          try {
+            const data = event.dataTransfer.getData('text/plain');
+            console.log('Drop data:', data);
+            const [itemType, itemId] = data.split(':');
+            
+            if (itemType === 'folder') {
+              this.moveFolderToParentWithNotification(parseInt(itemId), folderId);
+            } else if (itemType === 'chat') {
+              this.moveChatToFolderWithNotification(parseInt(itemId), folderId);
+            }
+          } catch (dataError) {
+            console.error('Error parsing drop data:', dataError);
+          }
+        } else {
+          console.warn('No drag data found for the drop operation');
+        }
+        
+        // Reset drag state
+        this.isDragging = false;
+        this.isDraggingOver = false;
+        this.isDraggingFolder = false;
+        this.currentDropTarget = null;
+        this.draggedChat = null;
+        this.draggedFolder = null;
+        
+      } catch (error) {
+        console.error('Error in handleDrop:', error);
+        addError({
+          title: 'Drop Error',
+          message: 'An error occurred while moving the item.',
+          details: error.message
+        });
       }
-      
-      this.draggedChat = null;
+    },
+    // Folder hierarchy check
+    isDescendantOf(folderId, ancestorId) {
+      // Check if folderId is a descendant of ancestorId
+      const folder = folders.value.find(f => f.id === folderId);
+      if (!folder || !folder.parent_id) return false;
+      if (folder.parent_id === ancestorId) return true;
+      return this.isDescendantOf(folder.parent_id, ancestorId);
+    },
+    // Move a folder with notification
+    moveFolderToParentWithNotification(folderId, parentId) {
+      try {
+        const folder = this.getFolderById(folderId);
+        const parentFolder = this.getFolderById(parentId);
+        
+        if (folder && parentFolder) {
+          moveFolderToParent(folderId, parentId)
+            .then(() => {
+              // Show notification
+              this.folderMovedName = folder.name;
+              this.folderDestinationName = parentFolder.name;
+              this.folderMoveToast = true;
+              
+              // Auto-hide after 3 seconds
+              setTimeout(() => {
+                this.folderMoveToast = false;
+              }, 3000);
+            })
+            .catch(err => {
+              addError({
+                title: 'Folder Move Error',
+                message: `Failed to move "${folder.name}" to "${parentFolder.name}"`,
+                details: err.message
+              });
+            });
+        }
+      } catch (error) {
+        console.error('Error moving folder:', error);
+        addError({
+          title: 'Folder Move Error',
+          message: 'An error occurred while moving the folder.',
+          details: error.message
+        });
+      }
+    },
+    getChildFolders(parentId) {
+      try {
+        return safeFilter(folders.value, folder => folder.parent_id === parentId);
+      } catch (error) {
+        console.error('Error getting child folders:', error);
+        addError({
+          title: 'Folder Structure Error',
+          message: 'An error occurred while loading folder structure',
+          details: error.message
+        });
+        return [];
+      }
     },
     // Move chat with notification
     moveChatToFolderWithNotification(chatId, folderId) {
       const targetFolder = this.getFolderById(folderId);
       if (targetFolder) {
-        moveChatToFolder(chatId, folderId);
-        this.lastMovedToFolderName = targetFolder.name;
-        this.showToast = true;
-        
-        // Auto-hide toast after 3 seconds
-        setTimeout(() => {
-          this.showToast = false;
-        }, 3000);
+        moveChatToFolder(chatId, folderId)
+          .then(() => {
+            this.lastMovedToFolderName = targetFolder.name;
+            this.showToast = true;
+            
+            // Auto-hide toast after 3 seconds
+            setTimeout(() => {
+              this.showToast = false;
+            }, 3000);
+          })
+          .catch(err => {
+            addError({
+              title: 'Chat Move Error',
+              message: `Failed to move chat to "${targetFolder.name}"`,
+              details: err.message
+            });
+          });
       }
     }
   }

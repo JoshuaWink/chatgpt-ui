@@ -35,7 +35,9 @@ const db = new sqlite.Database('./chatgpt-ui.db', (err) => {
       CREATE TABLE IF NOT EXISTS folders (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         name TEXT NOT NULL,
-        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        parent_id INTEGER NULL,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (parent_id) REFERENCES folders(id) ON DELETE SET NULL
       );
       
       CREATE TABLE IF NOT EXISTS chats (
@@ -59,7 +61,7 @@ const db = new sqlite.Database('./chatgpt-ui.db', (err) => {
     
     // Create default 'Uncategorized' folder if not exists
     db.run(`
-      INSERT OR IGNORE INTO folders (id, name) VALUES (1, 'Uncategorized')
+      INSERT OR IGNORE INTO folders (id, name, parent_id) VALUES (1, 'Uncategorized', NULL)
     `);
   }
 });
@@ -71,7 +73,7 @@ app.use(express.static(join(__dirname, 'dist')));
 
 // Get all folders
 app.get('/api/folders', (req, res) => {
-  db.all('SELECT * FROM folders ORDER BY name', [], (err, rows) => {
+  db.all('SELECT * FROM folders ORDER BY parent_id NULLS FIRST, name', [], (err, rows) => {
     if (err) {
       res.status(500).json({ error: err.message });
       return;
@@ -82,44 +84,97 @@ app.get('/api/folders', (req, res) => {
 
 // Create a folder
 app.post('/api/folders', (req, res) => {
-  const { name } = req.body;
+  const { name, parent_id } = req.body;
   if (!name) {
     res.status(400).json({ error: 'Folder name is required' });
     return;
   }
   
-  db.run('INSERT INTO folders (name) VALUES (?)', [name], function(err) {
+  db.run('INSERT INTO folders (name, parent_id) VALUES (?, ?)', [name, parent_id || null], function(err) {
     if (err) {
       res.status(500).json({ error: err.message });
       return;
     }
-    res.json({ id: this.lastID, name });
+    res.json({ id: this.lastID, name, parent_id: parent_id || null });
   });
 });
 
 // Update a folder
 app.put('/api/folders/:id', (req, res) => {
-  const { name } = req.body;
-  const id = req.params.id;
+  const { id } = req.params;
+  const { name, parent_id } = req.body;
   
+  // Validate input
   if (!name) {
     res.status(400).json({ error: 'Folder name is required' });
     return;
   }
   
-  db.run('UPDATE folders SET name = ? WHERE id = ?', [name, id], function(err) {
-    if (err) {
-      res.status(500).json({ error: err.message });
+  // Don't allow setting parent to itself or non-existent folder
+  if (parent_id) {
+    if (parseInt(parent_id) === parseInt(id)) {
+      res.status(400).json({ error: 'Folder cannot be its own parent' });
       return;
     }
     
-    if (this.changes === 0) {
-      res.status(404).json({ error: 'Folder not found' });
-      return;
-    }
-    
-    res.json({ id, name });
-  });
+    // Check if parent exists
+    db.get('SELECT id FROM folders WHERE id = ?', [parent_id], (err, row) => {
+      if (err || !row) {
+        res.status(400).json({ error: 'Parent folder does not exist' });
+        return;
+      }
+      
+      // Check for circular references
+      let potentialParentId = parent_id;
+      let hasCircular = false;
+      
+      const checkCircular = (callback) => {
+        db.get('SELECT parent_id FROM folders WHERE id = ?', [potentialParentId], (err, row) => {
+          if (err || !row || !row.parent_id) {
+            callback(false);
+            return;
+          }
+          
+          if (parseInt(row.parent_id) === parseInt(id)) {
+            callback(true);
+            return;
+          }
+          
+          potentialParentId = row.parent_id;
+          checkCircular(callback);
+        });
+      };
+      
+      checkCircular((isCircular) => {
+        if (isCircular) {
+          res.status(400).json({ error: 'Circular folder reference detected' });
+          return;
+        }
+        
+        // Update the folder
+        updateFolder();
+      });
+    });
+  } else {
+    // No parent_id, safe to update
+    updateFolder();
+  }
+  
+  function updateFolder() {
+    db.run('UPDATE folders SET name = ?, parent_id = ? WHERE id = ?', [name, parent_id, id], function(err) {
+      if (err) {
+        res.status(500).json({ error: err.message });
+        return;
+      }
+      
+      if (this.changes === 0) {
+        res.status(404).json({ error: 'Folder not found' });
+        return;
+      }
+      
+      res.json({ id: parseInt(id), name, parent_id });
+    });
+  }
 });
 
 // Delete a folder
