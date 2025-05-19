@@ -25,6 +25,7 @@ const showSidebar = ref(true);
 const currentMessages = ref([]);
 const loadingMessages = ref(false);
 const localError = ref(null);
+const folderChangeNotification = ref(null);
 
 // Error handling
 onErrorCaptured((err) => {
@@ -66,6 +67,29 @@ watch(selectedChatId, (newId) => {
     loadChatMessages(newId);
   }
 });
+
+// Watch for folder changes in the current chat
+watch(() => {
+  if (!selectedChatId.value) return null;
+  const chat = chats.value.find(c => c.id === selectedChatId.value);
+  return chat ? chat.folder_id : null;
+}, (newFolderId, oldFolderId) => {
+  if (newFolderId && oldFolderId && newFolderId !== oldFolderId) {
+    const oldFolder = folders.value.find(f => f.id === oldFolderId);
+    const newFolder = folders.value.find(f => f.id === newFolderId);
+    
+    folderChangeNotification.value = {
+      from: oldFolder ? oldFolder.name : 'Uncategorized',
+      to: newFolder ? newFolder.name : 'Uncategorized',
+      timestamp: new Date()
+    };
+    
+    // Auto-hide after 3 seconds
+    setTimeout(() => {
+      folderChangeNotification.value = null;
+    }, 3000);
+  }
+}, { deep: true });
 
 // Get the current chat
 function getCurrentChat() {
@@ -135,46 +159,43 @@ async function handleDeleteChat(chatId) {
 
 // Handle moving chat to folder
 async function handleMovedToFolder(folderId) {
-  // This function will be called when the chat is moved to a folder
-  // No additional action needed here as the database service already updates the chat
+  // This function will be called when the chat is moved to a folder from the ChatWindow
   console.log(`Chat ${selectedChatId.value} moved to folder ${folderId}`);
+  // The actual movement is handled in the database service
+  // The UI will update through reactive state
+}
+
+// Add a message to the current chat
+async function addMessageToChat(message) {
+  const chatId = selectedChatId.value;
+  if (!chatId) return;
+  
+  await addMessage(chatId, message.content, message.isUser);
+  currentMessages.value.push(message);
+}
+
+// Update the title of the current chat
+async function updateChatTitle(title) {
+  const chatId = selectedChatId.value;
+  if (!chatId) return;
+  
+  await updateChat(chatId, { title });
+}
+
+// Clear the current chat's messages
+async function clearChat() {
+  const chatId = selectedChatId.value;
+  if (!chatId) return;
+  
+  if (confirm('Are you sure you want to clear all messages? This action cannot be undone.')) {
+    await clearMessages(chatId);
+    currentMessages.value = [];
+  }
 }
 
 // Toggle sidebar
 function toggleSidebar() {
   showSidebar.value = !showSidebar.value;
-}
-
-// Add a message to the current chat
-async function addMessageToChat(message) {
-  if (!selectedChatId.value) {
-    await createNewChat();
-  }
-  
-  // Add to UI immediately for responsive feel
-  currentMessages.value.push(message);
-  
-  // Save to database
-  await addMessage(
-    selectedChatId.value,
-    message.content,
-    message.isUser
-  );
-}
-
-// Update chat title
-async function updateChatTitle(title) {
-  if (selectedChatId.value) {
-    await updateChat(selectedChatId.value, { title });
-  }
-}
-
-// Clear chat messages
-async function clearChat() {
-  if (!selectedChatId.value) return;
-  
-  await clearMessages(selectedChatId.value);
-  currentMessages.value = [];
 }
 </script>
 
@@ -236,6 +257,14 @@ async function clearChat() {
       </main>
      
     </template>
+    
+    <!-- Global error display -->
+    <div v-if="localError" class="error-container alert alert-danger">
+      <h4 class="alert-heading">An error occurred</h4>
+      <p>{{ localError }}</p>
+      <hr>
+      <p class="mb-0">Try refreshing the page. If the problem persists, please contact support.</p>
+    </div>
   </div>
 </template>
 

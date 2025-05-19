@@ -8,23 +8,50 @@
           class="form-control" 
           placeholder="Type a message..." 
           rows="1"
+          :disabled="isLoading"
           @keydown.enter.prevent="sendMessage"
           @input="autoResize"></textarea>
         <button 
           type="submit" 
           class="btn btn-primary"
-          :disabled="!message.trim()">
-          <i class="bi bi-send-fill me-1"></i>
-          Send
+          :disabled="!message.trim() || isLoading">
+          <div v-if="isLoading" class="spinner-border spinner-border-sm me-1" role="status">
+            <span class="visually-hidden">Loading...</span>
+          </div>
+          <i v-else class="bi bi-send-fill me-1"></i>
+          {{ isLoading ? 'Sending...' : 'Send' }}
         </button>
       </div>
     </form>
+    <div v-if="modelStatus" class="model-status mt-2">
+      <small class="text-muted d-flex align-items-center">
+        <span class="status-indicator" :class="{ 'connected': modelConnected }"></span>
+        {{ modelConnected ? 'Connected to local model' : 'Using simulation mode' }}
+        <button v-if="!modelConnected" class="btn btn-sm btn-link py-0" @click="$emit('show-curl')">
+          Show cURL example
+        </button>
+      </small>
+    </div>
   </div>
 </template>
 
 <script>
 export default {
   name: 'ChatInput',
+  props: {
+    isLoading: {
+      type: Boolean,
+      default: false
+    },
+    modelConnected: {
+      type: Boolean,
+      default: false
+    },
+    modelStatus: {
+      type: Boolean,
+      default: true
+    }
+  },
   data() {
     return {
       message: ''
@@ -32,7 +59,7 @@ export default {
   },
   methods: {
     sendMessage() {
-      if (this.message.trim()) {
+      if (this.message.trim() && !this.isLoading) {
         this.$emit('send', this.message.trim());
         this.message = '';
         this.$nextTick(() => {
@@ -77,9 +104,33 @@ textarea {
   border-right: none;
 }
 
+textarea:disabled {
+  background-color: #f8f9fa;
+}
+
 button {
   border-top-left-radius: 0;
   border-bottom-left-radius: 0;
+  min-width: 85px;
+}
+
+.model-status {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.status-indicator {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background-color: #dc3545;
+  margin-right: 5px;
+  display: inline-block;
+}
+
+.status-indicator.connected {
+  background-color: #198754;
 }
 
 @media (max-width: 767.98px) {

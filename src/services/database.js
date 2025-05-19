@@ -134,7 +134,22 @@ const updateChat = async (id, data) => {
 
 // Move a chat to a folder
 const moveChatToFolder = async (chatId, folderId) => {
-  return await updateChat(chatId, { folder_id: folderId });
+  try {
+    await api.updateChat(chatId, { folder_id: folderId });
+    
+    // Update the local state
+    const chatIndex = chats.value.findIndex(chat => chat.id === chatId);
+    if (chatIndex >= 0) {
+      chats.value[chatIndex].folder_id = folderId;
+    }
+    
+    console.log(`Chat ${chatId} moved to folder ${folderId} successfully`);
+    return true;
+  } catch (err) {
+    console.error(`Failed to move chat ${chatId} to folder ${folderId}:`, err);
+    error.value = err.message;
+    return Promise.reject(err);
+  }
 };
 
 // Delete a chat

@@ -22,9 +22,15 @@
           v-for="folder in folders" 
           :key="folder.id"
           class="folder-item p-2 rounded"
-          :class="{ 'active': selectedFolderId === folder.id }"
+          :class="{ 
+            'active': selectedFolderId === folder.id,
+            'folder-drop-target': isDraggingOver && currentDropTarget === folder.id 
+          }"
           @click="selectFolder(folder.id)"
-          @contextmenu.prevent="showFolderContextMenu($event, folder)">
+          @contextmenu.prevent="showFolderContextMenu($event, folder)"
+          @dragover.prevent="handleDragOver($event, folder.id)"
+          @dragleave="handleDragLeave"
+          @drop.prevent="handleDrop($event, folder.id)">
           <div class="d-flex align-items-center">
             <i class="bi bi-folder me-2"></i>
             <div class="folder-name text-truncate">{{ folder.name }}</div>
@@ -46,11 +52,19 @@
           :key="chat.id"
           class="chat-item p-2 rounded"
           :class="{ 'active': selectedChatId === chat.id }"
+          draggable="true"
           @click="selectChat(chat.id)"
-          @contextmenu.prevent="showChatContextMenu($event, chat)">
+          @contextmenu.prevent="showChatContextMenu($event, chat)"
+          @dragstart="handleDragStart($event, chat)">
           <div class="d-flex align-items-center">
             <i class="bi bi-chat-left-text me-2"></i>
             <div class="chat-title text-truncate">{{ chat.title }}</div>
+            <div class="ms-auto d-flex align-items-center">
+              <small class="text-muted folder-indicator" v-if="!selectedFolderId">
+                <i class="bi bi-folder-fill me-1 small"></i>
+                {{ getFolderById(chat.folder_id).name }}
+              </small>
+            </div>
           </div>
           <small class="text-muted">{{ formatDate(chat.updated_at) }}</small>
         </div>
@@ -72,6 +86,20 @@
       :folder="selectedFolder"
       @save="saveFolder"
     />
+    
+    <!-- Toast notification for chat movement -->
+    <div class="toast-container position-fixed bottom-0 end-0 p-3">
+      <div class="toast" :class="{ 'show': showToast }" role="alert" aria-live="assertive" aria-atomic="true">
+        <div class="toast-header">
+          <i class="bi bi-check-circle-fill text-success me-2"></i>
+          <strong class="me-auto">Chat Moved</strong>
+          <button type="button" class="btn-close" @click="showToast = false"></button>
+        </div>
+        <div class="toast-body">
+          Chat moved to "{{ lastMovedToFolderName }}"
+        </div>
+      </div>
+    </div>
   </div>
 </template>
 
@@ -103,7 +131,15 @@ export default {
       contextMenuItems: [],
       // Folder dialog
       showFolderDialog: false,
-      selectedFolder: null
+      selectedFolder: null,
+      // Drag and drop
+      isDragging: false,
+      isDraggingOver: false,
+      currentDropTarget: null,
+      draggedChat: null,
+      // Toast notification
+      showToast: false,
+      lastMovedToFolderName: ''
     };
   },
   computed: {
@@ -145,74 +181,84 @@ export default {
     },
     // Context Menu for Chats
     showChatContextMenu(event, chat) {
+      if (!chat) return;
+      
       this.contextMenuTop = event.clientY;
       this.contextMenuLeft = event.clientX;
       this.contextMenuTitle = chat.title;
       
-      // Build menu items with move to folder submenu
-      const folderSubMenu = folders.value
-        .filter(folder => folder.id !== chat.folder_id)
-        .map(folder => ({
-          label: folder.name,
-          icon: 'bi-folder',
-          action: () => {
-            moveChatToFolder(chat.id, folder.id);
-          }
-        }));
-      
-      this.contextMenuItems = [
-        {
-          label: 'Delete Chat',
-          icon: 'bi-trash',
-          action: () => {
-            if (confirm('Are you sure you want to delete this chat?')) {
-              this.$emit('delete-chat', chat.id);
+      try {
+        // Build menu items with move to folder submenu
+        const folderSubMenu = folders.value
+          .filter(folder => folder.id !== chat.folder_id)
+          .map(folder => ({
+            label: folder.name,
+            icon: 'bi-folder',
+            action: () => {
+              this.moveChatToFolderWithNotification(chat.id, folder.id);
             }
+          }));
+        
+        this.contextMenuItems = [
+          {
+            label: 'Delete Chat',
+            icon: 'bi-trash',
+            action: () => {
+              if (confirm('Are you sure you want to delete this chat?')) {
+                this.$emit('delete-chat', chat.id);
+              }
+            }
+          },
+          { divider: true },
+          {
+            label: 'Move to Folder',
+            icon: 'bi-folder-symlink',
+            submenu: folderSubMenu
           }
-        },
-        { divider: true },
-        {
-          label: 'Move to Folder',
-          icon: 'bi-folder-symlink',
-          submenu: folderSubMenu
-        }
-      ];
-      
-      this.showContextMenu = true;
+        ];
+        
+        this.showContextMenu = true;
+      } catch (err) {
+        console.error('Error showing context menu:', err);
+      }
     },
     // Context Menu for Folders
     showFolderContextMenu(event, folder) {
       // Don't allow operations on the Uncategorized folder
-      if (folder.id === 1) return;
+      if (!folder || folder.id === 1) return;
       
       this.contextMenuTop = event.clientY;
       this.contextMenuLeft = event.clientX;
       this.contextMenuTitle = folder.name;
       
-      this.contextMenuItems = [
-        {
-          label: 'Edit Folder',
-          icon: 'bi-pencil',
-          action: () => {
-            this.selectedFolder = folder;
-            this.showFolderDialog = true;
-          }
-        },
-        {
-          label: 'Delete Folder',
-          icon: 'bi-trash',
-          action: () => {
-            if (confirm(`Are you sure you want to delete "${folder.name}"? Chats will be moved to Uncategorized.`)) {
-              deleteFolder(folder.id);
-              if (this.selectedFolderId === folder.id) {
-                this.selectedFolderId = null;
+      try {
+        this.contextMenuItems = [
+          {
+            label: 'Edit Folder',
+            icon: 'bi-pencil',
+            action: () => {
+              this.selectedFolder = folder;
+              this.showFolderDialog = true;
+            }
+          },
+          {
+            label: 'Delete Folder',
+            icon: 'bi-trash',
+            action: () => {
+              if (confirm(`Are you sure you want to delete "${folder.name}"? Chats will be moved to Uncategorized.`)) {
+                deleteFolder(folder.id);
+                if (this.selectedFolderId === folder.id) {
+                  this.selectedFolderId = null;
+                }
               }
             }
           }
-        }
-      ];
-      
-      this.showContextMenu = true;
+        ];
+        
+        this.showContextMenu = true;
+      } catch (err) {
+        console.error('Error showing folder context menu:', err);
+      }
     },
     // Folder Dialog
     saveFolder(folder) {
@@ -227,6 +273,57 @@ export default {
       } else {
         // Create new folder
         createFolder(folder.name);
+      }
+    },
+    // Drag and Drop functionality
+    handleDragStart(event, chat) {
+      this.isDragging = true;
+      this.draggedChat = chat;
+      event.dataTransfer.effectAllowed = 'move';
+      event.dataTransfer.setData('text/plain', chat.id);
+      
+      // Add a dragging class to the element
+      event.target.classList.add('dragging');
+    },
+    handleDragOver(event, folderId) {
+      // Only allow dropping if this is a different folder than the chat's current folder
+      if (this.draggedChat && this.draggedChat.folder_id !== folderId) {
+        event.dataTransfer.dropEffect = 'move';
+        this.isDraggingOver = true;
+        this.currentDropTarget = folderId;
+      }
+    },
+    handleDragLeave() {
+      this.isDraggingOver = false;
+      this.currentDropTarget = null;
+    },
+    handleDrop(event, folderId) {
+      const chatId = parseInt(event.dataTransfer.getData('text/plain'));
+      
+      // Reset drag state
+      this.isDragging = false;
+      this.isDraggingOver = false;
+      this.currentDropTarget = null;
+      
+      // Move the chat to the new folder
+      if (chatId && this.draggedChat && this.draggedChat.folder_id !== folderId) {
+        this.moveChatToFolderWithNotification(chatId, folderId);
+      }
+      
+      this.draggedChat = null;
+    },
+    // Move chat with notification
+    moveChatToFolderWithNotification(chatId, folderId) {
+      const targetFolder = this.getFolderById(folderId);
+      if (targetFolder) {
+        moveChatToFolder(chatId, folderId);
+        this.lastMovedToFolderName = targetFolder.name;
+        this.showToast = true;
+        
+        // Auto-hide toast after 3 seconds
+        setTimeout(() => {
+          this.showToast = false;
+        }, 3000);
       }
     }
   }
@@ -277,52 +374,68 @@ export default {
 
 .chat-list {
   flex: 1;
-  overflow-y: auto;
+  min-height: 0;
 }
 
 .folder-item,
 .chat-item {
+  user-select: none;
   cursor: pointer;
-  transition: background-color 0.2s;
+  transition: all 0.2s;
 }
 
 .folder-item:hover,
 .chat-item:hover {
-  background-color: #e9ecef;
+  background-color: rgba(13, 110, 253, 0.1);
 }
 
 .folder-item.active,
 .chat-item.active {
-  background-color: #e9ecef;
-  border-left: 3px solid #0d6efd;
+  background-color: rgba(13, 110, 253, 0.2);
 }
 
-.folder-name,
+.chat-item {
+  display: flex;
+  flex-direction: column;
+}
+
 .chat-title {
-  font-size: 0.9rem;
   font-weight: 500;
 }
 
-/* Custom scrollbar for better UX */
-.folder-list::-webkit-scrollbar,
-.chat-list::-webkit-scrollbar {
-  width: 4px;
+.btn-sm {
+  font-size: 0.75rem;
 }
 
-.folder-list::-webkit-scrollbar-track,
-.chat-list::-webkit-scrollbar-track {
-  background: #f1f1f1;
-  border-radius: 10px;
+.folder-drop-target {
+  background-color: rgba(25, 135, 84, 0.15);
+  border: 2px dashed #198754;
 }
 
-.folder-list::-webkit-scrollbar-thumb,
-.chat-list::-webkit-scrollbar-thumb {
-  background: #ccc;
-  border-radius: 10px;
+.chat-item.dragging {
+  opacity: 0.6;
 }
 
-.folder-list::-webkit-scrollbar-thumb:hover,
-.chat-list::-webkit-scrollbar-thumb:hover {
-  background: #bbb;
+.folder-indicator {
+  font-size: 0.7rem;
+  padding: 0.1rem 0.3rem;
+  background-color: rgba(108, 117, 125, 0.1);
+  border-radius: 0.25rem;
+}
+
+/* Toast styling */
+.toast-container {
+  z-index: 1100;
+}
+
+.toast {
+  background-color: white;
+  box-shadow: 0 0.5rem 1rem rgba(0, 0, 0, 0.15);
+  opacity: 0;
+  transition: opacity 0.3s;
+}
+
+.toast.show {
+  opacity: 1;
 }
 </style> 

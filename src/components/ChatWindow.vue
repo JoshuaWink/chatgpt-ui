@@ -11,6 +11,9 @@
             <h5 class="mb-0">{{ currentChat.title || 'New Chat' }}</h5>
             <small class="text-muted">
               <i class="bi bi-folder-fill me-1"></i>{{ currentFolderName }}
+              <span v-if="folderChanged" class="folder-updated-badge ms-2">
+                Moved
+              </span>
             </small>
           </div>
         </div>
@@ -31,6 +34,15 @@
       <div v-if="currentChat.messages.length === 0" class="text-center text-muted py-5">
         <h3>Welcome to ChatGPT</h3>
         <p>Send a message to start a conversation!</p>
+        
+        <div v-if="!modelConnected" class="alert alert-info mt-4 mx-auto" style="max-width: 500px;">
+          <h5><i class="bi bi-info-circle me-2"></i>Local Model Connection</h5>
+          <p>The application is currently in simulation mode because it couldn't connect to a local model server.</p>
+          <p class="mb-0">If you want to use a local model, make sure it's running at <code>http://localhost:8080</code> with OpenAI-compatible API.</p>
+          <hr>
+          <p class="mb-0">Example cURL command:</p>
+          <code-block :code="getCurlCommand()" title="cURL for Chat Completions" />
+        </div>
       </div>
       <chat-message 
         v-for="(message, index) in currentChat.messages" 
@@ -40,7 +52,11 @@
         :timestamp="message.timestamp" />
     </div>
     <div class="card-footer p-0 border-0">
-      <chat-input @send="sendMessage" />
+      <chat-input 
+        @send="sendMessage" 
+        :is-loading="isLoadingResponse"
+        :model-connected="modelConnected"
+        @show-curl="showCurlExample = true" />
     </div>
     
     <!-- Folder Selection Dialog -->
@@ -54,13 +70,19 @@
           <div class="modal-body">
             <div class="list-group">
               <button 
-                v-for="folder in availableFolders" 
+                v-for="folder in allFolders" 
                 :key="folder.id"
                 class="list-group-item list-group-item-action d-flex align-items-center"
-                :class="{ 'active': currentChat.folder_id === folder.id }"
+                :class="{ 
+                  'active': currentChat.folder_id === folder.id,
+                  'text-muted': currentChat.folder_id === folder.id,
+                  'folder-item-selectable': currentChat.folder_id !== folder.id
+                }"
+                :disabled="currentChat.folder_id === folder.id"
                 @click="moveToFolder(folder.id)">
                 <i class="bi bi-folder me-2"></i>
                 {{ folder.name }}
+                <span v-if="currentChat.folder_id === folder.id" class="ms-2 small">(Current)</span>
               </button>
             </div>
           </div>
@@ -71,19 +93,48 @@
       </div>
       <div class="modal-backdrop fade show" @click="showFolderSelect = false"></div>
     </div>
+    
+    <!-- cURL Command Modal -->
+    <div class="modal fade" :class="{ 'show d-block': showCurlExample }">
+      <div class="modal-dialog modal-dialog-centered modal-lg">
+        <div class="modal-content">
+          <div class="modal-header">
+            <h5 class="modal-title">cURL Command for Local Model</h5>
+            <button type="button" class="btn-close" @click="showCurlExample = false"></button>
+          </div>
+          <div class="modal-body">
+            <p>Use the following cURL command to interact with your local model directly:</p>
+            <code-block 
+              :code="curlCommand || getCurlCommand()" 
+              title="cURL for Chat Completions API" />
+            <p class="text-muted small mt-3">
+              This command sends the current conversation to your local model server at http://localhost:5145 
+              following the OpenAI API format.
+            </p>
+          </div>
+          <div class="modal-footer">
+            <button type="button" class="btn btn-secondary" @click="showCurlExample = false">Close</button>
+          </div>
+        </div>
+      </div>
+      <div class="modal-backdrop fade show" @click="showCurlExample = false"></div>
+    </div>
   </div>
 </template>
 
 <script>
 import ChatMessage from './ChatMessage.vue';
 import ChatInput from './ChatInput.vue';
+import CodeBlock from './CodeBlock.vue';
 import { folders, moveChatToFolder } from '../services/database';
+import modelService from '../services/modelService';
 
 export default {
   name: 'ChatWindow',
   components: {
     ChatMessage,
-    ChatInput
+    ChatInput,
+    CodeBlock
   },
   props: {
     currentChat: {
@@ -93,20 +144,53 @@ export default {
   },
   data() {
     return {
-      showFolderSelect: false
+      showFolderSelect: false,
+      folderChanged: false,
+      previousFolderId: null,
+      isLoadingResponse: false,
+      modelConnected: false,
+      curlCommand: '',
+      showCurlExample: false
     };
   },
   computed: {
     availableFolders() {
       return folders.value.filter(folder => folder.id !== this.currentChat.folder_id);
     },
+    allFolders() {
+      return folders.value;
+    },
     currentFolderName() {
       const folder = folders.value.find(f => f.id === this.currentChat.folder_id);
       return folder ? folder.name : 'Uncategorized';
     }
   },
+  watch: {
+    'currentChat.folder_id': {
+      handler(newFolderId, oldFolderId) {
+        if (oldFolderId && newFolderId !== oldFolderId) {
+          this.showFolderChanged();
+        }
+      }
+    }
+  },
+  async mounted() {
+    this.scrollToBottom();
+    
+    // Test connection to model server
+    try {
+      this.modelConnected = await modelService.testConnection();
+      console.log('Model server connection:', this.modelConnected ? 'connected' : 'disconnected');
+    } catch (err) {
+      console.error('Error connecting to model server:', err);
+      this.modelConnected = false;
+    }
+  },
+  updated() {
+    this.scrollToBottom();
+  },
   methods: {
-    sendMessage(content) {
+    async sendMessage(content) {
       // Add user message
       this.addMessage(content, true);
       
@@ -115,10 +199,53 @@ export default {
         this.$emit('update-title', content.substring(0, 30) + (content.length > 30 ? '...' : ''));
       }
       
-      // Simulate bot response (in a real app, this would be an API call)
-      setTimeout(() => {
-        this.simulateResponse(content);
-      }, 1000);
+      if (this.modelConnected) {
+        await this.getModelResponse(content);
+      } else {
+        // Fall back to simulation if model is not connected
+        setTimeout(() => {
+          this.simulateResponse(content);
+        }, 1000);
+      }
+    },
+    async getModelResponse(userMessage) {
+      try {
+        this.isLoadingResponse = true;
+        
+        // Prepare the message history for the API call
+        const messages = this.currentChat.messages.map(msg => ({
+          role: msg.isUser ? 'user' : 'assistant',
+          content: msg.content
+        }));
+        
+        // Generate the cURL command for reference
+        this.curlCommand = modelService.generateCurlCommand('/v1/chat/completions', {
+          model: 'local-model',
+          messages: messages,
+          max_tokens: 1000,
+          temperature: 0.7
+        });
+        
+        console.log('Generated cURL command:', this.curlCommand);
+        
+        // Call the model service
+        const response = await modelService.generateChatCompletion(messages);
+        
+        // Check if we have a valid response
+        if (response && response.choices && response.choices.length > 0) {
+          const responseText = response.choices[0].message.content;
+          this.addMessage(responseText, false);
+        } else {
+          throw new Error('Invalid response from model');
+        }
+      } catch (error) {
+        console.error('Error getting model response:', error);
+        // Fall back to simulation on error
+        this.addMessage("I'm sorry, I couldn't connect to the model server. Here's a simulated response instead.", false);
+        this.simulateResponse(userMessage);
+      } finally {
+        this.isLoadingResponse = false;
+      }
     },
     addMessage(content, isUser = false) {
       this.$emit('add-message', {
@@ -141,6 +268,8 @@ export default {
         response = "I'd be happy to help. What do you need assistance with?";
       } else if (userMessage.toLowerCase().includes('thank')) {
         response = "You're welcome! Is there anything else you'd like to know?";
+      } else if (userMessage.toLowerCase().includes('curl')) {
+        response = `Here's a cURL command to access the local model:\n\n\`\`\`\n${this.curlCommand}\n\`\`\``;
       }
       
       this.addMessage(response, false);
@@ -163,19 +292,80 @@ export default {
       this.$emit('toggle-sidebar');
     },
     showMoveToFolder() {
+      this.previousFolderId = this.currentChat.folder_id;
       this.showFolderSelect = true;
     },
     moveToFolder(folderId) {
-      moveChatToFolder(this.currentChat.id, folderId);
-      this.showFolderSelect = false;
-      this.$emit('moved-to-folder', folderId);
+      if (folderId === this.currentChat.folder_id) {
+        this.showFolderSelect = false;
+        return;
+      }
+      
+      console.log(`Moving chat ${this.currentChat.id} to folder ${folderId}`);
+      moveChatToFolder(this.currentChat.id, folderId)
+        .then(() => {
+          console.log('Chat moved successfully');
+          this.$emit('moved-to-folder', folderId);
+          this.showFolderChanged();
+        })
+        .catch(err => {
+          console.error('Error moving chat:', err);
+          alert('Failed to move chat. Please try again.');
+        })
+        .finally(() => {
+          this.showFolderSelect = false;
+        });
+    },
+    showFolderChanged() {
+      this.folderChanged = true;
+      setTimeout(() => {
+        this.folderChanged = false;
+      }, 3000);
+    },
+    getCurlCommand() {
+      // Generate and return a cURL command for the current conversation
+      const messages = this.currentChat.messages.map(msg => ({
+        role: msg.isUser ? 'user' : 'assistant',
+        content: msg.content
+      }));
+      
+      return modelService.generateCurlCommand('/v1/chat/completions', {
+        model: 'local-model',
+        messages: messages,
+        max_tokens: 1000,
+        temperature: 0.7
+      });
+    },
+    copyToClipboard(text) {
+      try {
+        // Modern clipboard API
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          navigator.clipboard.writeText(text)
+            .then(() => {
+              alert('cURL command copied to clipboard!');
+            })
+            .catch(err => {
+              console.error('Failed to copy text: ', err);
+              this.fallbackCopyToClipboard(text);
+            });
+        } else {
+          this.fallbackCopyToClipboard(text);
+        }
+      } catch (err) {
+        console.error('Error copying to clipboard:', err);
+        alert('Failed to copy to clipboard. Please copy the command manually.');
+      }
+    },
+    fallbackCopyToClipboard(text) {
+      // Fallback to older execCommand method
+      const tempInput = document.createElement('textarea');
+      tempInput.value = text;
+      document.body.appendChild(tempInput);
+      tempInput.select();
+      document.execCommand('copy');
+      document.body.removeChild(tempInput);
+      alert('cURL command copied to clipboard!');
     }
-  },
-  mounted() {
-    this.scrollToBottom();
-  },
-  updated() {
-    this.scrollToBottom();
   }
 }
 </script>
@@ -262,5 +452,69 @@ export default {
   .card-header {
     padding: 0.75rem;
   }
+}
+
+.folder-updated-badge {
+  display: inline-block;
+  background-color: #198754;
+  color: white;
+  font-size: 0.7rem;
+  padding: 0.1rem 0.4rem;
+  border-radius: 1rem;
+  animation: fade-in-out 3s forwards;
+}
+
+@keyframes fade-in-out {
+  0% { opacity: 0; }
+  10% { opacity: 1; }
+  90% { opacity: 1; }
+  100% { opacity: 0; }
+}
+
+.list-group-item:disabled {
+  cursor: not-allowed;
+  opacity: 0.7;
+}
+
+.folder-item-selectable {
+  position: relative;
+  transition: all 0.2s ease;
+  border-left: 3px solid transparent;
+}
+
+.folder-item-selectable:hover {
+  background-color: rgba(13, 110, 253, 0.1);
+  border-left: 3px solid #0d6efd;
+  transform: translateX(2px);
+}
+
+/* Add a subtle indicator to show clickable items */
+.folder-item-selectable::after {
+  content: '\F132';
+  font-family: "bootstrap-icons";
+  position: absolute;
+  right: 10px;
+  opacity: 0;
+  transition: opacity 0.2s;
+}
+
+.folder-item-selectable:hover::after {
+  opacity: 0.7;
+}
+
+/* Style the modal more clearly */
+.modal-content {
+  border: none;
+  box-shadow: 0 0.5rem 1rem rgba(0, 0, 0, 0.15);
+}
+
+.modal-header {
+  background-color: #f8f9fa;
+  border-bottom: 1px solid #dee2e6;
+}
+
+.modal-footer {
+  background-color: #f8f9fa;
+  border-top: 1px solid #dee2e6;
 }
 </style> 

@@ -11,7 +11,7 @@
       :key="index"
       class="context-menu-item"
       :class="{ 'context-menu-divider': item.divider, 'context-menu-submenu': item.submenu }"
-      @click="handleItemClick(item)">
+      @click="handleItemClick(item, index)">
       <template v-if="!item.divider">
         <i v-if="item.icon" :class="'bi ' + item.icon + ' me-2'"></i>
         <span>{{ item.label }}</span>
@@ -69,39 +69,53 @@ export default {
     // Close context menu when clicking outside
     document.addEventListener('click', this.closeMenu);
     document.addEventListener('contextmenu', this.closeMenu);
-    
-    // Make sure menu doesn't go off screen
-    this.$nextTick(() => {
-      if (!this.$el) return;
-      
-      const rect = this.$el.getBoundingClientRect();
-      const windowWidth = window.innerWidth;
-      const windowHeight = window.innerHeight;
-      
-      if (rect.right > windowWidth) {
-        this.$emit('update:left', this.left - (rect.right - windowWidth) - 10);
+  },
+  watch: {
+    show(newVal) {
+      if (newVal) {
+        // Only perform position adjustment when menu is shown
+        this.$nextTick(() => {
+          this.adjustPosition();
+        });
       }
-      
-      if (rect.bottom > windowHeight) {
-        this.$emit('update:top', this.top - (rect.bottom - windowHeight) - 10);
-      }
-    });
+    }
   },
   beforeUnmount() {
     document.removeEventListener('click', this.closeMenu);
     document.removeEventListener('contextmenu', this.closeMenu);
   },
   methods: {
+    adjustPosition() {
+      try {
+        if (!this.$el || !this.show) return;
+        
+        const rect = this.$el.getBoundingClientRect();
+        if (!rect) return;
+        
+        const windowWidth = window.innerWidth;
+        const windowHeight = window.innerHeight;
+        
+        if (rect.right > windowWidth) {
+          this.$emit('update:left', this.left - (rect.right - windowWidth) - 10);
+        }
+        
+        if (rect.bottom > windowHeight) {
+          this.$emit('update:top', this.top - (rect.bottom - windowHeight) - 10);
+        }
+      } catch (err) {
+        console.error('Error adjusting context menu position:', err);
+      }
+    },
     closeMenu() {
       this.$emit('update:show', false);
       this.currentSubmenu = null;
     },
-    handleItemClick(item) {
+    handleItemClick(item, index) {
       if (item.divider) return;
       
       if (item.submenu) {
         // Toggle submenu
-        this.currentSubmenu = this.currentSubmenu === item.index ? null : item.index;
+        this.currentSubmenu = this.currentSubmenu === index ? null : index;
         return;
       }
       
