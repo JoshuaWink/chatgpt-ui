@@ -131,7 +131,53 @@ export default {
       this.$emit('select', this.folder.id);
     },
     onContextMenu(event) {
-      this.$emit('context-menu', { event, folder: this.folder });
+      event.preventDefault();
+      event.stopPropagation();
+      
+      console.log('Right-clicked on folder:', this.folder.name);
+      
+      this.$emit('context-menu', { 
+        event, 
+        folder: this.folder
+      });
+    },
+    // Method to expand this folder and all its children
+    expandAll() {
+      // Set this folder to expanded
+      this.expanded = true;
+      
+      // Wait for children to be rendered
+      this.$nextTick(() => {
+        // Find all child FolderTree components and call expandAll on them
+        const childComponents = this.$el.querySelectorAll('.folder-children .folder-tree');
+        
+        childComponents.forEach(el => {
+          // Get the Vue component instance
+          const childComponent = el.__vueParentComponent?.child;
+          if (childComponent && typeof childComponent.expandAll === 'function') {
+            childComponent.expandAll();
+          }
+        });
+      });
+    },
+    // Method to collapse this folder and all its children
+    collapseAll() {
+      // First collapse all children recursively
+      this.$nextTick(() => {
+        // Find all child FolderTree components and call collapseAll on them
+        const childComponents = this.$el.querySelectorAll('.folder-children .folder-tree');
+        
+        childComponents.forEach(el => {
+          // Get the Vue component instance
+          const childComponent = el.__vueParentComponent?.child;
+          if (childComponent && typeof childComponent.collapseAll === 'function') {
+            childComponent.collapseAll();
+          }
+        });
+        
+        // Then collapse this folder
+        this.expanded = false;
+      });
     },
     handleDragOver(event) {
       // Accept both chats and folders

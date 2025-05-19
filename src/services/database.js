@@ -202,6 +202,91 @@ const clearMessages = async (chatId) => {
   }
 };
 
+// Duplicate a chat including all its messages
+const duplicateChat = async (chatId) => {
+  try {
+    // Get the original chat info
+    const originalChat = chats.value.find(chat => chat.id === chatId);
+    if (!originalChat) {
+      throw new Error(`Chat with ID ${chatId} not found`);
+    }
+    
+    // Create a new chat with the same title (add "Copy" suffix)
+    const newTitle = `${originalChat.title} (Copy)`;
+    const newChatId = await createChat(newTitle, originalChat.folder_id);
+    
+    if (!newChatId) {
+      throw new Error('Failed to create new chat during duplication');
+    }
+    
+    // Load messages from the original chat
+    const messages = await loadMessages(chatId);
+    
+    // Copy messages to the new chat
+    for (const message of messages) {
+      await addMessage(newChatId, message.content, message.is_user);
+    }
+    
+    await loadChats(); // Refresh the chat list
+    return newChatId;
+  } catch (err) {
+    console.error(`Failed to duplicate chat ${chatId}:`, err);
+    error.value = err.message;
+    return null;
+  }
+};
+
+// Export a chat to a JSON file
+const exportChat = async (chatId) => {
+  try {
+    // Get the chat details
+    const chat = chats.value.find(c => c.id === chatId);
+    if (!chat) {
+      throw new Error(`Chat with ID ${chatId} not found`);
+    }
+    
+    // Get the messages
+    const messages = await loadMessages(chatId);
+    
+    // Create export data
+    const exportData = {
+      chat: {
+        id: chat.id,
+        title: chat.title,
+        created_at: chat.created_at,
+        updated_at: chat.updated_at,
+      },
+      messages: messages
+    };
+    
+    // Convert to a JSON string
+    const jsonString = JSON.stringify(exportData, null, 2);
+    
+    // Create a blob and download it
+    const blob = new Blob([jsonString], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    
+    // Create a temporary link and click it to trigger download
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `${chat.title.replace(/[^a-z0-9]/gi, '_').toLowerCase()}_export.json`;
+    document.body.appendChild(a);
+    a.click();
+    
+    // Clean up
+    setTimeout(() => {
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    }, 0);
+    
+    return true;
+  } catch (err) {
+    console.error(`Failed to export chat ${chatId}:`, err);
+    error.value = err.message;
+    return false;
+  }
+};
+
 // Move a folder to another folder
 const moveFolderToParent = async (folderId, parentId) => {
   try {
@@ -252,5 +337,7 @@ export {
   addMessage,
   loadMessages,
   clearMessages,
-  moveFolderToParent
+  moveFolderToParent,
+  duplicateChat,
+  exportChat
 }; 

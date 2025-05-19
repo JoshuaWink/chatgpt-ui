@@ -115,7 +115,7 @@
 
 <script>
 import { ref } from 'vue';
-import { chats, folders, createFolder, deleteFolder, moveChatToFolder, moveFolderToParent } from '../services/database';
+import { chats, folders, createFolder, deleteFolder, moveChatToFolder, moveFolderToParent, updateChat, duplicateChat, exportChat } from '../services/database';
 import { addError } from '../components/ErrorToast.vue';
 import { safeFilter } from '../utils/errorUtils';
 import ContextMenu from './ContextMenu.vue';
@@ -220,14 +220,15 @@ export default {
     showChatContextMenu(event, chat) {
       if (!chat) return;
       
+      console.log('Right-clicked on chat:', chat.title, event);
+      
       this.contextMenuTop = event.clientY;
       this.contextMenuLeft = event.clientX;
       this.contextMenuTitle = chat.title;
       
       try {
         // Build menu items with move to folder submenu
-        const folderSubMenu = folders.value
-          .filter(folder => folder.id !== chat.folder_id)
+        const folderSubMenu = safeFilter(folders.value, folder => folder.id !== chat.folder_id)
           .map(folder => ({
             label: folder.name,
             icon: 'bi-folder',
@@ -236,7 +237,43 @@ export default {
             }
           }));
         
+        // Keep this fully intact to ensure all menu items are set
         this.contextMenuItems = [
+          {
+            label: 'Rename Chat',
+            icon: 'bi-pencil',
+            action: () => {
+              const newTitle = prompt('Enter new chat title:', chat.title);
+              if (newTitle && newTitle.trim() !== '') {
+                updateChat(chat.id, { title: newTitle.trim() })
+                  .catch(err => {
+                    addError({
+                      title: 'Rename Error',
+                      message: `Failed to rename chat: ${err.message}`
+                    });
+                  });
+              }
+            }
+          },
+          {
+            label: 'Duplicate Chat',
+            icon: 'bi-copy',
+            action: () => {
+              this.duplicateChatWithNotification(chat.id);
+            }
+          },
+          {
+            label: 'Move to Folder',
+            icon: 'bi-folder-symlink',
+            submenu: folderSubMenu
+          },
+          {
+            label: 'Export Chat',
+            icon: 'bi-download',
+            action: () => {
+              this.exportChatWithNotification(chat.id);
+            }
+          },
           {
             label: 'Delete Chat',
             icon: 'bi-trash',
@@ -245,16 +282,20 @@ export default {
                 this.$emit('delete-chat', chat.id);
               }
             }
-          },
-          { divider: true },
-          {
-            label: 'Move to Folder',
-            icon: 'bi-folder-symlink',
-            submenu: folderSubMenu
           }
         ];
         
-        this.showContextMenu = true;
+        console.log('Showing chat context menu', {
+          top: this.contextMenuTop,
+          left: this.contextMenuLeft,
+          title: this.contextMenuTitle,
+          itemCount: this.contextMenuItems.length
+        });
+        
+        // Set after a short delay to ensure Vue updates
+        setTimeout(() => {
+          this.showContextMenu = true;
+        }, 1);
       } catch (err) {
         console.error('Error showing context menu:', err);
       }
@@ -263,6 +304,8 @@ export default {
     showFolderContextMenu(event, folder) {
       // Don't allow operations on the Uncategorized folder
       if (!folder || folder.id === 1) return;
+      
+      console.log('Right-clicked on folder:', folder.name, event);
       
       this.contextMenuTop = event.clientY;
       this.contextMenuLeft = event.clientX;
@@ -279,6 +322,39 @@ export default {
             }
           },
           {
+            label: 'Create Subfolder',
+            icon: 'bi-folder-plus',
+            action: () => {
+              this.selectedFolder = { parent_id: folder.id };
+              this.showFolderDialog = true;
+            }
+          },
+          {
+            label: 'Rename',
+            icon: 'bi-pencil-square',
+            action: () => {
+              const newName = prompt('Enter new folder name:', folder.name);
+              if (newName && newName.trim() !== '') {
+                const updatedFolder = { ...folder, name: newName.trim() };
+                this.$emit('update-folder', updatedFolder);
+              }
+            }
+          },
+          {
+            label: 'Expand All',
+            icon: 'bi-arrows-angle-expand',
+            action: () => {
+              this.expandAllFolders(folder.id);
+            }
+          },
+          {
+            label: 'Collapse All',
+            icon: 'bi-arrows-angle-contract',
+            action: () => {
+              this.collapseAllFolders(folder.id);
+            }
+          },
+          {
             label: 'Delete Folder',
             icon: 'bi-trash',
             action: () => {
@@ -292,7 +368,17 @@ export default {
           }
         ];
         
-        this.showContextMenu = true;
+        console.log('Showing folder context menu', {
+          top: this.contextMenuTop,
+          left: this.contextMenuLeft,
+          title: this.contextMenuTitle,
+          itemCount: this.contextMenuItems.length
+        });
+        
+        // Set after a short delay to ensure Vue updates
+        setTimeout(() => {
+          this.showContextMenu = true;
+        }, 1);
       } catch (err) {
         console.error('Error showing folder context menu:', err);
       }
@@ -493,6 +579,155 @@ export default {
               details: err.message
             });
           });
+      }
+    },
+    // Implement duplicate chat functionality
+    duplicateChatWithNotification(chatId) {
+      try {
+        // Show a loading indicator or disable UI if needed
+        
+        duplicateChat(chatId)
+          .then(newChatId => {
+            if (newChatId) {
+              // Show success notification
+              addError({
+                title: 'Success',
+                message: 'Chat duplicated successfully',
+                type: 'success',
+                duration: 3000
+              });
+              
+              // Select the new chat
+              this.$emit('select-chat', newChatId);
+            } else {
+              throw new Error('Failed to duplicate chat');
+            }
+          })
+          .catch(err => {
+            addError({
+              title: 'Duplicate Chat Error',
+              message: `Failed to duplicate chat: ${err.message}`,
+              type: 'error'
+            });
+          });
+      } catch (error) {
+        addError({
+          title: 'Duplicate Chat Error',
+          message: `An unexpected error occurred: ${error.message}`,
+          type: 'error'
+        });
+      }
+    },
+    // Implement export chat functionality
+    exportChatWithNotification(chatId) {
+      try {
+        exportChat(chatId)
+          .then(success => {
+            if (success) {
+              addError({
+                title: 'Success',
+                message: 'Chat exported successfully',
+                type: 'success',
+                duration: 3000
+              });
+            } else {
+              throw new Error('Failed to export chat');
+            }
+          })
+          .catch(err => {
+            addError({
+              title: 'Export Chat Error',
+              message: `Failed to export chat: ${err.message}`,
+              type: 'error'
+            });
+          });
+      } catch (error) {
+        addError({
+          title: 'Export Chat Error',
+          message: `An unexpected error occurred: ${error.message}`,
+          type: 'error'
+        });
+      }
+    },
+    // Method to expand all folders starting from a given folder ID
+    expandAllFolders(folderId) {
+      try {
+        // Find the folder tree component for the specified folder
+        const folderTreeEls = document.querySelectorAll('.folder-tree');
+        
+        // Find the folder tree component that matches the folder ID
+        for (const el of folderTreeEls) {
+          // Get component using Vue's instance property
+          const component = el.__vueParentComponent?.child;
+          
+          if (component && component.folder && component.folder.id === folderId) {
+            // If we found the right component, call its expandAll method
+            if (typeof component.expandAll === 'function') {
+              component.expandAll();
+              
+              // Show notification
+              addError({
+                title: 'Success',
+                message: 'All folders expanded',
+                type: 'success',
+                duration: 2000
+              });
+              
+              return;
+            }
+          }
+        }
+        
+        // If we couldn't find the folder
+        throw new Error(`Couldn't find folder component for ID ${folderId}`);
+      } catch (error) {
+        console.error('Error expanding folders:', error);
+        addError({
+          title: 'Expand Error',
+          message: `Failed to expand folders: ${error.message}`,
+          type: 'error'
+        });
+      }
+    },
+    
+    // Method to collapse all folders starting from a given folder ID
+    collapseAllFolders(folderId) {
+      try {
+        // Find the folder tree component for the specified folder
+        const folderTreeEls = document.querySelectorAll('.folder-tree');
+        
+        // Find the folder tree component that matches the folder ID
+        for (const el of folderTreeEls) {
+          // Get component using Vue's instance property
+          const component = el.__vueParentComponent?.child;
+          
+          if (component && component.folder && component.folder.id === folderId) {
+            // If we found the right component, call its collapseAll method
+            if (typeof component.collapseAll === 'function') {
+              component.collapseAll();
+              
+              // Show notification
+              addError({
+                title: 'Success',
+                message: 'All folders collapsed',
+                type: 'success',
+                duration: 2000
+              });
+              
+              return;
+            }
+          }
+        }
+        
+        // If we couldn't find the folder
+        throw new Error(`Couldn't find folder component for ID ${folderId}`);
+      } catch (error) {
+        console.error('Error collapsing folders:', error);
+        addError({
+          title: 'Collapse Error',
+          message: `Failed to collapse folders: ${error.message}`,
+          type: 'error'
+        });
       }
     }
   }

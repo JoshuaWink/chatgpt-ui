@@ -21,12 +21,6 @@
           <button class="btn btn-sm btn-outline-secondary me-2" @click="showMoveToFolder">
             <i class="bi bi-folder-symlink me-1"></i>Move
           </button>
-          <button class="btn btn-sm btn-outline-secondary me-2" @click="deleteChat">
-            <i class="bi bi-trash me-1"></i>Delete
-          </button>
-          <button class="btn btn-sm btn-outline-secondary" @click="clearChat">
-            <i class="bi bi-eraser me-1"></i>Clear
-          </button>
         </div>
       </div>
     </div>

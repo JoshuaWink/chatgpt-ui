@@ -1,38 +1,48 @@
 <template>
-  <div 
-    v-if="show" 
-    class="context-menu" 
-    :style="{ top: top + 'px', left: left + 'px' }">
-    <div class="context-menu-header mb-1" v-if="title">
-      {{ title }}
-    </div>
+  <teleport to="body">
     <div 
-      v-for="(item, index) in menuItems"
-      :key="index"
-      class="context-menu-item"
-      :class="{ 'context-menu-divider': item.divider, 'context-menu-submenu': item.submenu }"
-      @click="handleItemClick(item, index)">
-      <template v-if="!item.divider">
-        <i v-if="item.icon" :class="'bi ' + item.icon + ' me-2'"></i>
-        <span>{{ item.label }}</span>
-        <i v-if="item.submenu" class="bi bi-chevron-right ms-auto"></i>
-        
-        <!-- Submenu -->
-        <div 
-          v-if="item.submenu && currentSubmenu === index" 
-          class="context-submenu">
+      v-if="show" 
+      class="context-menu" 
+      :style="{ top: top + 'px', left: left + 'px' }">
+      <div class="context-menu-header mb-1" v-if="title">
+        {{ title }}
+      </div>
+      <div class="context-menu-grid">
+        <template v-for="(item, index) in menuItems" :key="index">
+          <!-- Skip dividers in grid view -->
           <div 
-            v-for="(subItem, subIndex) in item.submenu"
-            :key="subIndex"
-            class="context-menu-item"
-            @click.stop="handleSubItemClick(item, subItem)">
-            <i v-if="subItem.icon" :class="'bi ' + subItem.icon + ' me-2'"></i>
-            <span>{{ subItem.label }}</span>
+            v-if="!item.divider"
+            class="context-menu-icon-item"
+            :class="{ 'has-submenu': item.submenu }"
+            :title="item.label"
+            @click="handleItemClick(item, index)">
+            <i v-if="item.icon" :class="'bi ' + item.icon"></i>
+            <i v-else class="bi bi-three-dots"></i>
+            
+            <!-- Submenu indicator -->
+            <div v-if="item.submenu" class="submenu-indicator">
+              <i class="bi bi-chevron-down"></i>
+            </div>
+            
+            <!-- Submenu -->
+            <div 
+              v-if="item.submenu && currentSubmenu === index" 
+              class="context-submenu grid-submenu">
+              <div 
+                v-for="(subItem, subIndex) in item.submenu"
+                :key="subIndex"
+                class="context-menu-icon-item"
+                :title="subItem.label"
+                @click.stop="handleSubItemClick(item, subItem)">
+                <i v-if="subItem.icon" :class="'bi ' + subItem.icon"></i>
+                <i v-else class="bi bi-three-dots"></i>
+              </div>
+            </div>
           </div>
-        </div>
-      </template>
+        </template>
+      </div>
     </div>
-  </div>
+  </teleport>
 </template>
 
 <script>
@@ -60,6 +70,7 @@ export default {
       default: () => []
     }
   },
+  emits: ['update:show', 'update:left', 'update:top'],
   data() {
     return {
       currentSubmenu: null
@@ -67,8 +78,12 @@ export default {
   },
   mounted() {
     // Close context menu when clicking outside
-    document.addEventListener('click', this.closeMenu);
-    document.addEventListener('contextmenu', this.closeMenu);
+    document.addEventListener('mousedown', this.closeMenu);
+    
+    // Prevent right-click menu from appearing when showing our custom menu
+    if (this.show) {
+      document.addEventListener('contextmenu', this.preventDefaultContextMenu);
+    }
   },
   watch: {
     show(newVal) {
@@ -77,14 +92,20 @@ export default {
         this.$nextTick(() => {
           this.adjustPosition();
         });
+        document.addEventListener('contextmenu', this.preventDefaultContextMenu);
+      } else {
+        document.removeEventListener('contextmenu', this.preventDefaultContextMenu);
       }
     }
   },
   beforeUnmount() {
-    document.removeEventListener('click', this.closeMenu);
-    document.removeEventListener('contextmenu', this.closeMenu);
+    document.removeEventListener('mousedown', this.closeMenu);
+    document.removeEventListener('contextmenu', this.preventDefaultContextMenu);
   },
   methods: {
+    preventDefaultContextMenu(e) {
+      e.preventDefault();
+    },
     adjustPosition() {
       try {
         if (!this.$el || !this.show) return;
@@ -106,7 +127,17 @@ export default {
         console.error('Error adjusting context menu position:', err);
       }
     },
-    closeMenu() {
+    closeMenu(event) {
+      // Don't close if clicking within the menu
+      if (event && this.$el && this.$el.contains(event.target)) {
+        return;
+      }
+      
+      // If this was triggered by a contextmenu event, don't close immediately
+      if (event && event.type === 'contextmenu') {
+        return;
+      }
+      
       this.$emit('update:show', false);
       this.currentSubmenu = null;
     },
@@ -141,51 +172,124 @@ export default {
   position: fixed;
   background-color: white;
   border: 1px solid #dee2e6;
-  border-radius: 0.25rem;
-  padding: 0.5rem 0;
-  min-width: 160px;
-  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+  border-radius: 0.5rem;
+  padding: 0.75rem;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.1);
   z-index: 1050;
+  max-width: 220px;
+  animation: fadeIn 0.2s ease-out;
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; transform: scale(0.95); }
+  to { opacity: 1; transform: scale(1); }
 }
 
 .context-menu-header {
-  padding: 0.25rem 1rem;
-  font-weight: 500;
-  color: #6c757d;
+  padding: 0.25rem 0.5rem;
+  font-weight: 600;
+  color: #495057;
   font-size: 0.875rem;
   border-bottom: 1px solid #eee;
+  text-align: center;
+  margin-bottom: 0.5rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
-.context-menu-item {
-  padding: 0.5rem 1rem;
-  cursor: pointer;
+.context-menu-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 6px;
+}
+
+.context-menu-icon-item {
   display: flex;
   align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  border-radius: 0.4rem;
+  cursor: pointer;
+  position: relative;
+  transition: all 0.2s ease;
+  background-color: #f8f9fa;
+  border: 1px solid transparent;
+}
+
+.context-menu-icon-item:hover {
+  background-color: #e9ecef;
+  border-color: #dee2e6;
+  transform: translateY(-2px);
+  box-shadow: 0 2px 5px rgba(0, 0, 0, 0.08);
+}
+
+.context-menu-icon-item:active {
+  transform: translateY(0);
+  box-shadow: none;
+}
+
+.context-menu-icon-item i {
+  font-size: 1.1rem;
+  color: #495057;
+}
+
+.context-menu-icon-item:hover i {
+  color: #212529;
+}
+
+/* Submenu indicator */
+.submenu-indicator {
+  position: absolute;
+  bottom: 2px;
+  right: 2px;
+  font-size: 0.5rem;
+  color: #6c757d;
+}
+
+.has-submenu {
   position: relative;
 }
 
-.context-menu-item:hover {
-  background-color: #f8f9fa;
-}
-
-.context-menu-divider {
-  height: 0;
-  margin: 0.5rem 0;
-  overflow: hidden;
-  border-top: 1px solid #dee2e6;
-  padding: 0;
-  cursor: default;
-}
-
-.context-submenu {
+.grid-submenu {
   position: absolute;
-  top: 0;
-  left: 100%;
+  top: calc(100% + 5px);
+  left: 0;
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 6px;
   background-color: white;
   border: 1px solid #dee2e6;
-  border-radius: 0.25rem;
-  padding: 0.5rem 0;
-  min-width: 160px;
-  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+  border-radius: 0.5rem;
+  padding: 0.75rem;
+  z-index: 1060;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.1);
+  animation: fadeIn 0.2s ease-out;
+}
+
+/* Add tooltip functionality */
+.context-menu-icon-item::after {
+  content: attr(title);
+  position: absolute;
+  top: -40px;
+  left: 50%;
+  transform: translateX(-50%);
+  background-color: rgba(0, 0, 0, 0.8);
+  color: white;
+  padding: 4px 8px;
+  border-radius: 4px;
+  font-size: 0.75rem;
+  white-space: nowrap;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.2s ease;
+  z-index: 1070;
+  max-width: 150px;
+  text-align: center;
+}
+
+.context-menu-icon-item:hover::after {
+  opacity: 1;
 }
 </style> 
